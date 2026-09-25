@@ -1,0 +1,38 @@
+name: CI compilation experiment
+on:
+  push:
+    branches: [experiment/ci-compile-times]
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    name: ${{ matrix.suite }} / ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [union, money]
+        variant: [baseline, no-lto, no-lto-core-opt1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Record runner and compiler
+        run: |
+          mkdir -p benchmark-results
+          { rustc -Vv; cargo -V; lscpu; free -h; } > benchmark-results/environment.txt
+      # Deliberately no restored cache: every variant measures its own cold
+      # build, then the same dependency-warm workspace rebuild.
+      - name: Measure compilation and run complete suite
+        env:
+          VARIANT: ${{ matrix.variant }}
+          SUITE: ${{ matrix.suite }}
+          CARGO_TERM_COLOR: never
+        run: python3 scripts/ci-benchmark/run.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-${{ matrix.suite }}-${{ matrix.variant }}
+          path: |
+            benchmark-results/
+            target/cargo-timings/
