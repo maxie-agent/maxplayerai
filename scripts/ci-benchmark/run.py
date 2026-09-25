@@ -8,8 +8,8 @@ import time
 
 variant = os.environ['VARIANT']
 suite = os.environ['SUITE']
-out = Path('benchmark-results')
-out.mkdir(exist_ok=True)
+out = Path('benchmark-results') / variant
+out.mkdir(parents=True, exist_ok=True)
 results = {'variant': variant, 'suite': suite, 'sha': os.environ.get('GITHUB_SHA'), 'phases': []}
 config = []
 if variant != 'baseline':
@@ -20,7 +20,7 @@ features = (['--features', 'acp,gateway,git-delivery,wallet'] if suite == 'union
             else ['--no-default-features', '--features', 'gateway,git-delivery,wallet,live-mints'])
 base = ['cargo', 'test', '-p', 'maxplayer-core', '--release', '--locked', *features, *config]
 
-def measure(name, command):
+def measure(name, command, required=True):
     print(f'{name}: {command}', flush=True)
     started = time.monotonic()
     with (out / f'{name}.log').open('w') as log:
@@ -31,9 +31,10 @@ def measure(name, command):
     print(json.dumps(row), flush=True)
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
         summary.write(f"- {name}: {row['seconds']} seconds; exit {proc.returncode}\n")
-    if proc.returncode:
+    if proc.returncode and required:
         print((out / f'{name}.log').read_text()[-16000:], flush=True)
         raise SystemExit(proc.returncode)
+    return proc.returncode
 
 measure('cold-build', [*base, '--no-run', '--timings'])
 # Mimic CI's dependency-only cache: discard the two workspace crates seen
@@ -41,4 +42,12 @@ measure('cold-build', [*base, '--no-run', '--timings'])
 subprocess.run(['cargo', 'clean', '--release', '-p', 'maxplayer-core',
                 '-p', 'maxplayer-private-protocol'], check=True)
 measure('dependency-warm-build', [*base, '--no-run', '--timings'])
-measure('tests', base)
+measure('unchanged-artifacts-build', [*base, '--no-run'])
+failed = measure('tests', base, required=False)
+# Keep the full-suite failure visible; focused probes do not replace it.
+if suite == 'union':
+    for i in range(5):
+        measure(f'watchdog-probe-{i+1}', [*base, '--lib',
+                'seller_node::run::tests::an_unknown_id_closed_costs_no_reconnect_and_no_resubscribe',
+                '--', '--exact', '--nocapture'], required=False)
+raise SystemExit(failed)

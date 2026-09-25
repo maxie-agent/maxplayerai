@@ -2,18 +2,21 @@ name: CI compilation experiment
 on:
   push:
     branches: [experiment/ci-compile-times]
+    paths:
+      - '.github/workflows/ci-compile-benchmark.yml'
+      - 'scripts/ci-benchmark/*.py'
 permissions:
   contents: read
 jobs:
   benchmark:
-    name: ${{ matrix.suite }} / ${{ matrix.variant }}
+    name: ${{ matrix.suite }} / ${{ matrix.order }}
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         suite: [union, money]
-        variant: [baseline, no-lto, no-lto-core-opt1]
+        order: [baseline-first, no-lto-first]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.1
@@ -25,14 +28,15 @@ jobs:
       # build, then the same dependency-warm workspace rebuild.
       - name: Measure compilation and run complete suite
         env:
-          VARIANT: ${{ matrix.variant }}
+          ORDER: ${{ matrix.order }}
           SUITE: ${{ matrix.suite }}
           CARGO_TERM_COLOR: never
-        run: python3 scripts/ci-benchmark/run.py
+        run: python3 scripts/ci-benchmark/paired.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: benchmark-${{ matrix.suite }}-${{ matrix.variant }}
+          name: paired-${{ matrix.suite }}-${{ matrix.order }}
           path: |
             benchmark-results/
-            target/cargo-timings/
+            target-baseline/cargo-timings/
+            target-no-lto/cargo-timings/
